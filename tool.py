@@ -144,6 +144,19 @@ def get_stock_name_from_code(stock_code: str) -> str:
 
     return name
 
+
+def _resolve_stock_code(stock_name: str) -> str:
+    # Accept either a stock name ('贵州茅台') or a stock code ('600519.SH'): some in-context examples pass the code.
+    # An unknown name raises an error instead of returning None, because tushare treats ts_code=None as
+    # "all stocks" and would silently return the data of other stocks.
+    if isinstance(stock_name, str) and re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', stock_name.strip().upper()):
+        return stock_name.strip().upper()
+    stock_code = get_stock_code(stock_name)
+    if stock_code is None:
+        raise ValueError(f'Cannot find the stock "{stock_name}" in {os.path.basename(STOCK_BASIC_CSV)}')
+    return stock_code
+
+
 def get_stock_prices_data(stock_name: str='', start_date: str='', end_date: str='', freq:str='daily') -> pd.DataFrame:
     """
         Retrieves the daily/weekly/monthly price data for a given stock code during a specific time period. get_stock_prices_data('贵州茅台','20200120','20220222','daily')
@@ -158,7 +171,7 @@ def get_stock_prices_data(stock_name: str='', start_date: str='', end_date: str=
         - pd.DataFrame: A dataframe that contains the daily/weekly/monthly data. The output columns contain stock_code, trade_date, open, high, low, close, pre_close(昨天收盘价), change(涨跌额), pct_chg(涨跌幅),vol(成交量),amount(成交额)
         """
 
-    stock_code = get_stock_code(stock_name)
+    stock_code = _resolve_stock_code(stock_name)
 
     if freq == 'daily':
         stock_data = pro.daily(**{
@@ -258,7 +271,7 @@ def get_stock_technical_data(stock_name: str, start_date: str, end_date: str) ->
     """
 
     # Technical factors
-    stock_code = get_stock_code(stock_name)
+    stock_code = _resolve_stock_code(stock_name)
     stock_data1 = pro.stk_factor(**{
         "ts_code": stock_code,
         "start_date": start_date,
@@ -590,8 +603,10 @@ def rank_index_cross_section(stock_data: pd.DataFrame, Top_k: int = -1, ascendin
     index = stock_data.columns[-1]
     stock_data = stock_data.sort_values(by=index, ascending=ascending)
     #stock_data_selected = stock_data[['trade_date','stock_name', index]].copy()
-    stock_data_selected = stock_data[:Top_k]
-    stock_data_selected = stock_data_selected.drop_duplicates(subset=['stock_name'], keep='first')
+    stock_data_selected = stock_data.drop_duplicates(subset=['stock_name'], keep='first')
+    # Top_k=-1 keeps all rows (slicing with [:-1] would silently drop the last one)
+    if int(Top_k) > 0:
+        stock_data_selected = stock_data_selected[:int(Top_k)]
     return stock_data_selected
 
 
@@ -610,7 +625,7 @@ def get_company_info(stock_name: str='') -> pd.DataFrame:
             - pd.DataFrame: A DataFrame that contains the company information.
     """
 
-    stock_code = get_stock_code(stock_name)
+    stock_code = _resolve_stock_code(stock_name)
     df = pro.stock_company(**{
         "ts_code": stock_code,"exchange": "","status": "", "limit": "","offset": ""
     }, fields=[
@@ -710,7 +725,7 @@ def get_Financial_data_from_time_range(stock_name:str, start_date:str, end_date:
             pd.DataFrame: A DataFrame containin financial data for the specified stock and date range.
 
 """
-    stock_code = get_stock_code(stock_name)
+    stock_code = _resolve_stock_code(stock_name)
     stock_data = pro.fina_indicator(**{
         "ts_code": stock_code,
         "ann_date": "",
@@ -722,13 +737,33 @@ def get_Financial_data_from_time_range(stock_name:str, start_date:str, end_date:
         "offset": ""
     }, fields=["ts_code", "end_date", financial_index])
 
-    #stock_name = get_stock_name_from_code(stock_code)
+    if stock_name == stock_code:
+        # A stock code was passed (e.g. the output of get_stock_code); show the stock name instead.
+        try:
+            stock_name = get_stock_name_from_code(stock_code)
+        except IndexError:
+            pass
     stock_data['stock_name'] = stock_name
     stock_data = stock_data.sort_values(by='end_date', ascending=True)  # 按照日期升序排列
     # 把end_data列改名为trade_date
     stock_data.rename(columns={'end_date': 'trade_date'}, inplace=True)
     stock_financial_data = stock_data[['stock_name', 'trade_date', financial_index]]
     return stock_financial_data
+
+
+def _to_quarter(date_str: str) -> str:
+    # cn_gdp expects quarters such as '2023Q2', while the prompts pass dates such as '20230510'.
+    # tushare compares the two strings directly, so '20220711' would silently drop 2022Q1-2022Q3.
+    if isinstance(date_str, str) and re.fullmatch(r'\d{8}', date_str):
+        return f'{date_str[:4]}Q{(int(date_str[4:6]) - 1) // 3 + 1}'
+    return date_str
+
+
+def _to_month(date_str: str) -> str:
+    # cn_cpi / cn_ppi / cn_m expect months such as '202305'; with '20120711' the first month (201207) would be dropped.
+    if isinstance(date_str, str) and re.fullmatch(r'\d{8}', date_str):
+        return date_str[:6]
+    return date_str
 
 
 def get_GDP_data(start_quarter:str='', end_quarter:str='', index:str='gdp_yoy') -> pd.DataFrame:
@@ -747,6 +782,7 @@ def get_GDP_data(start_quarter:str='', end_quarter:str='', index:str='gdp_yoy') 
 
     # The output is a DataFrame with three columns:
     # the first column represents the quarter (quarter), the second column represents the country (country), and the third column represents the index (index).
+    start_quarter, end_quarter = _to_quarter(start_quarter), _to_quarter(end_quarter)
     df = pro.cn_gdp(**{
         "q":'',
         "start_q": start_quarter,
@@ -832,6 +868,7 @@ def get_cpi_ppi_currency_supply_data(start_month: str = '', end_month: str = '',
         - pd.DataFrame: DataFrame type, including three columns: month, country, and index value.
         """
 
+    start_month, end_month = _to_month(start_month), _to_month(end_month)
     if type == 'cpi':
 
         df = pro.cn_cpi(**{
@@ -885,7 +922,7 @@ def get_cpi_ppi_currency_supply_data(start_month: str = '', end_month: str = '',
     df = df[['month', 'country', index]].copy()
     return df
 
-def predict_next_value(df: pd.DataFrame, pred_index: str = 'nt_yoy', pred_num:int = 1. ) -> pd.DataFrame:
+def predict_next_value(df: pd.DataFrame, pred_index: str = 'nt_yoy', pred_num:int = 1) -> pd.DataFrame:
     """
     Predict the next n values of a specific column in the DataFrame using linear regression.
 
@@ -909,7 +946,7 @@ def predict_next_value(df: pd.DataFrame, pred_index: str = 'nt_yoy', pred_num:in
     model.fit(x, y)
 
     # Predict the future n values.
-    next_indices = np.array(range(len(input_array), len(input_array) + pred_num)).reshape(-1, 1)
+    next_indices = np.array(range(len(input_array), len(input_array) + int(pred_num))).reshape(-1, 1)
     predicted_values = model.predict(next_indices).flatten()
 
     for i, value in enumerate(predicted_values, 1):
@@ -917,7 +954,7 @@ def predict_next_value(df: pd.DataFrame, pred_index: str = 'nt_yoy', pred_num:in
         for other_col in df.columns:
             if other_col != pred_index:
                 row_data[other_col] = 'pred' + str(i)
-        df = df.append(row_data, ignore_index=True)
+        df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)  # DataFrame.append was removed in pandas 2.0
 
         # Return the updated DataFrame
     return df
@@ -1140,20 +1177,21 @@ def calculate_earning_between_two_time(stock_name: str = '', start_date: str = '
         Returns:
             float: The rate of return for the specified stock between the two dates.
     """
-    if is_fund(stock_name):
-        fund_code = query_fund_name_or_code(stock_name)
-        stock_data = query_fund_data(fund_code, start_date, end_date)
-        if index =='':
-            index = 'adj_nav'
-    else:
-        stock_data = get_stock_prices_data(stock_name, start_date, end_date,'daily')
     try:
+        if is_fund(stock_name):
+            fund_code = query_fund_name_or_code(stock_name)
+            stock_data = query_fund_data(fund_code, start_date, end_date)
+            if index == '' or index not in stock_data.columns:
+                # fund data has no 'close' column: use the adjusted net asset value
+                index = 'adj_nav'
+        else:
+            stock_data = get_stock_prices_data(stock_name, start_date, end_date,'daily')
         end_price = stock_data.iloc[-1][index]
         start_price = stock_data.iloc[0][index]
         earning = cal_dt(end_price, start_price)
         # earning = round((end_price - start_price) / start_price * 100, 2)
-    except:
-        print(ts_code,start_date,end_date)
+    except Exception:
+        print(stock_name, start_date, end_date)
         print('##################### 该股票没有数据 #####################')
         return None
     # percent = earning * 100
@@ -1221,13 +1259,14 @@ def loop_rank(df: pd.DataFrame,  func: callable, *args, **kwargs) -> pd.DataFram
 
     return stock_data
 
-def output_mean_median_col(data: pd.DataFrame, col: str = 'new_feature') -> float:
+def output_mean_median_col(data: pd.DataFrame, col: str = 'new_feature', title_name: str = '') -> float:
     # It calculates the mean and median value for the specified column.
+    # title_name is optional: the in-context examples (prompt_visualization.json) pass a title as the third argument.
 
     mean = round(data[col].mean(), 2)
     median = round(data[col].median(), 2)
-    #
-    #print(title, mean)
+    if title_name:
+        print(title_name, mean, median)
     return (mean, median)
 
 
@@ -1608,11 +1647,12 @@ def query_fund_data(fund_code: str = '', start_date: str = '', end_date: str = '
         df.rename(columns={'ts_code': 'fund_code'}, inplace=True)
         df.rename(columns={'nav_date': 'trade_date'}, inplace=True)
         df.sort_values(by='trade_date', ascending=True, inplace=True)
+        df.reset_index(drop=True, inplace=True)   # so that row 0 is the earliest date
     except:
         print(fund_code,'基金代码不存在')
         return None
-    #
-    df['pct_chg'] = df['adj_nav'].pct_change()
+    # daily change in percent, the same unit as pct_chg of stock/index data (calculate_stock_index divides it by 100)
+    df['pct_chg'] = df['adj_nav'].pct_change() * 100
     #
     df.loc[0, 'pct_chg'] = 0.0
 
@@ -1694,12 +1734,12 @@ def print_save_table(df: pd.DataFrame, title_name: str, save:bool = False ,file_
 
     #print(table)
 
-
-    if not os.path.exists(file_path):
-        os.makedirs(file_path)
+    if isinstance(save, str):
+        save = save.strip().lower() == 'true'   # one in-context example passes "true" as a string
 
     if file_path is not None and save == True:
-        file_path = file_path + title_name + '.csv'
+        os.makedirs(file_path, exist_ok=True)
+        file_path = os.path.join(file_path, title_name + '.csv')
         df.to_csv(file_path, index=False)
     return df
 
@@ -1803,8 +1843,8 @@ if __name__ == "__main__":
     # df_macro = get_cpi_ppi_currency_supply_data('200101','202304','cpi','nt_yoy')
     # df_macro = get_cpi_ppi_currency_supply_data('200101','202304','ppi','ppi_yoy')
     # df_macro = get_cpi_ppi_currency_supply_data('200101','202304','currency_supply','m2_yoy')
-    # df_gdp = get_GDP_data('2001Q1','2023Q1','gdp_yoy')
-    # df_gdp = predict_next_value(df_gdp, 'gdp_yoy', 4)
+    df_gdp = get_GDP_data('2001Q1','2023Q1','gdp_yoy')
+    df_gdp = predict_next_value(df_gdp, 'gdp_yoy', 4)
     #company_df = get_company_info('贵州茅台')
     #print_save_table(company_df, '贵州茅台公司信息')
     #fin_df = get_Financial_data_from_time_range(stock_code, '20200101', '20230526','roe')

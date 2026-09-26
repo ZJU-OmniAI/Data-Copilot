@@ -1,5 +1,3 @@
-import json
-import requests
 import openai
 import tiktoken
 import os
@@ -38,25 +36,24 @@ def retry(exception_to_check, tries=3, delay=5, backoff=1):
     return deco_retry
 
 def timeout_decorator(timeout):
-    class TimeoutException(Exception):
-        pass
 
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            result = [TimeoutException('Function call timed out')]  # Nonlocal mutable variable
+            result = [None]  # Nonlocal mutable variable
             def target():
                 try:
                     result[0] = func(*args, **kwargs)
                 except Exception as e:
                     result[0] = e
 
-            thread = threading.Thread(target=target)
+            thread = threading.Thread(target=target, daemon=True)
             thread.start()
             thread.join(timeout)
             if thread.is_alive():
-                print(f"Function {func.__name__} timed out, retrying...")
-                return wrapper(*args, **kwargs)
+                # Raise instead of calling wrapper() again: the recursion retried forever when the API kept timing out.
+                # The retry decorator decides whether to try again.
+                raise TimeoutError(f"Function {func.__name__} timed out after {timeout} seconds")
             if isinstance(result[0], Exception):
                 raise result[0]
             return result[0]
@@ -64,42 +61,10 @@ def timeout_decorator(timeout):
     return decorator
 
 
-def send_chat_request(request):
-    endpoint = 'http://10.15.82.10:8006/v1/chat/completions'
-    model = 'gpt-3.5-turbo'
-    # gpt4 gpt4-32k和gpt-3.5-turbo
-    headers = {
-        'Content-Type': 'application/json',
-    }
-    temperature = 0.7
-    top_p = 0.95
-    frequency_penalty = 0
-    presence_penalty = 0
-    max_tokens = 8000
-    stream = False
-    stop = None
-    messages = [{"role": "user", "content": request}]
-    data = {
-        'model': model,
-        'messages': messages,
-        'temperature': temperature,
-        'top_p': top_p,
-        'frequency_penalty': frequency_penalty,
-        'presence_penalty': presence_penalty,
-        'max_tokens': max_tokens,
-        'stream': stream,
-        'stop': stop,
-    }
+# Errors worth retrying. A wrong key or an invalid request fails at once instead of being retried for hours.
+TRANSIENT_ERRORS = (openai.error.RateLimitError, openai.error.APIError, openai.error.APIConnectionError,
+                    openai.error.ServiceUnavailableError, openai.error.Timeout, TimeoutError)
 
-    response = requests.post(endpoint, headers=headers, data=json.dumps(data))
-
-    if response.status_code == 200:
-        data = json.loads(response.text)
-        data_res = data['choices'][0]['message']
-
-        return data_res
-    else:
-        raise Exception(f"Request failed with status code {response.status_code}: {response.text}")
 
 def num_tokens_from_string(string: str, encoding_name: str) -> int:
     """Returns the number of tokens in a text string."""
@@ -108,19 +73,13 @@ def num_tokens_from_string(string: str, encoding_name: str) -> int:
     print('num_tokens:',num_tokens)
     return num_tokens
 
+@retry(TRANSIENT_ERRORS, tries=10, delay=20, backoff=2)
 @timeout_decorator(45)
 def send_chat_request_Azure(query, openai_key, api_base, engine):
-    openai.api_type = "azure"
-    openai.api_version = "2023-03-15-preview"
-
-    openai.api_base = api_base
-    openai.api_key = openai_key
-
-
     max_token_num = 8000 - num_tokens_from_string(query,'cl100k_base')
-    #
-    openai.api_request_timeout = 1 # 设置超时时间为10秒
 
+    # The credentials are passed per request instead of being written to openai.api_type / api_base / api_key:
+    # those module-level settings are shared by all users of the web demo and leaked into later official-API calls.
     response = openai.ChatCompletion.create(
         engine = engine,
         messages=[{"role": "system", "content": "You are an useful AI assistant that helps people solve the problem step by step."},
@@ -130,7 +89,11 @@ def send_chat_request_Azure(query, openai_key, api_base, engine):
         top_p=0.95,
         frequency_penalty=0,
         presence_penalty=0,
-        stop=None)
+        stop=None,
+        api_type="azure",
+        api_version="2023-03-15-preview",
+        api_base=api_base,
+        api_key=openai_key)
 
 
 
@@ -140,14 +103,13 @@ def send_chat_request_Azure(query, openai_key, api_base, engine):
 
 
 
-@retry(Exception, tries=10, delay=20, backoff=2)
+@retry(TRANSIENT_ERRORS, tries=10, delay=20, backoff=2)
 @timeout_decorator(45)
 def send_official_call(query, openai_key='', api_base='', engine=''):
     start = time.time()
     # 转换成可阅读的时间
     start = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start))
     print(start)
-    openai.api_key  = openai_key
 
     response = openai.ChatCompletion.create(
         # engine="gpt35",
@@ -159,7 +121,8 @@ def send_official_call(query, openai_key='', api_base='', engine=''):
         top_p=0.1,
         frequency_penalty=0,
         presence_penalty=0,
-        stop=None)
+        stop=None,
+        api_key=openai_key)  # per request, so that concurrent users of the web demo do not overwrite each other's key
 
     data_res = response['choices'][0]['message']['content']
     return data_res

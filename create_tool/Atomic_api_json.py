@@ -5,13 +5,10 @@ import os
 import random
 from matplotlib.ticker import MaxNLocator
 import matplotlib.font_manager as fm
-from prettytable import PrettyTable
-from blessed import Terminal
 import time
 from datetime import datetime, timedelta
 import numpy as np
 import mplfinance as mpf
-from prettytable import PrettyTable
 from typing import Optional
 import matplotlib.font_manager as fm
 from matplotlib.lines import Line2D
@@ -134,7 +131,7 @@ columns_dict = dict(zip(columns, columns_means))
 atomic_api = {"func_desc":None,"Column_name":None,"example_input":None,"output_first_and_last_row":None}
 
 atomic_api["func_desc"] = "获取申万行业指数的成分股信息"
-atomic_api["example_input"] = "pro.index_member(index_code= \"850531.SI \", fields=[\"index_code\",\"con_code\",\"in_date\",\"out_date\",\"is_new\",\"index_name\",\"con_name\"])"
+atomic_api["example_input"] = "pro.index_member(index_code= \"850531.SI\", fields=[\"index_code\",\"con_code\",\"in_date\",\"out_date\",\"is_new\",\"index_name\",\"con_name\"])"
 atomic_api["output_first_and_last_row"] = df_sample_str
 atomic_api["Column_name"] = str(columns_dict)
 
@@ -156,7 +153,7 @@ columns_means = ['行业代码', '行业名称', '行业级别']
 columns_dict = dict(zip(columns, columns_means))
 
 atomic_api["func_desc"] = "获取申万一级(L1),二级(L2),三级(L3)的行业信息"
-atomic_api["example_input"] = "pro.index_classify(level='L1', src='SW2021',filter=[\"index_code\",\"industry_name\",\"level\"])"
+atomic_api["example_input"] = "pro.index_classify(level='L1', src='SW2021',fields=[\"index_code\",\"industry_name\",\"level\"])"
 atomic_api["output_first_and_last_row"] = df_sample_str
 atomic_api["Column_name"] = str(columns_dict)
 
@@ -343,11 +340,8 @@ all_atomic_api["pro.index_weight"] = atomic_api
 
 #######################################################################################################################
 
-# 创建文件夹如果不存在
-if not os.path.exists(""):
-    os.mkdir("")
-
-with open("all_atomic_api.json", "w") as f:
+# 保存到本脚本所在的目录 (create_tool/)
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "all_atomic_api.json"), "w", encoding="utf-8") as f:
     json.dump(all_atomic_api, f, ensure_ascii=False, indent=4)
 
 

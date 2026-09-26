@@ -2,15 +2,19 @@
 import tushare as ts
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 import os
 import json
+import time
+import inspect
 from matplotlib.ticker import MaxNLocator
 import matplotlib.font_manager as fm
-from lab_gpt4_call import send_chat_request,send_chat_request_Azure,send_official_call
+from lab_gpt4_call import send_chat_request_Azure,send_official_call
 from lab_llms_call import send_chat_request_qwen,send_chat_request_glm,send_chat_request_chatglm3_6b,send_chat_request_chatglm_6b
 # from lab_llm_local_call import send_chat_request_internlm_chat
 #import ast
 import re
+import tool
 from tool import *
 import tiktoken
 import concurrent.futures
@@ -18,7 +22,6 @@ import datetime
 from PIL import Image
 from io import BytesIO
 import  queue
-import datetime
 from threading import Thread
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
@@ -37,14 +40,32 @@ class MyThread(Thread):
         super(MyThread, self).__init__()
         self.func = target
         self.args = args
+        self.exception = None
 
     def run(self):
-        self.result = self.func(*self.args)
+        try:
+            self.result = self.func(*self.args)
+        except Exception as e:
+            # keep the exception so that get_result() can report it to the caller
+            self.exception = e
+            raise
 
     def get_result(self):
+        if self.exception is not None:
+            raise self.exception
         return self.result
 
 
+
+def get_tool_function(func_name):
+    """
+    Look up a tool function by name. Only the functions defined in tool.py can be called:
+    the name comes from the LLM output, so it must never be passed to eval().
+    """
+    func = getattr(tool, str(func_name), None)
+    if str(func_name).startswith('_') or not inspect.isfunction(func) or func.__module__ != tool.__name__:
+        raise ValueError(f'Unknown tool function: {func_name}')
+    return func
 
 
 def parse_and_exe(call_dict, result_buffer, parallel_step: str='1'):
@@ -56,13 +77,14 @@ def parse_and_exe(call_dict, result_buffer, parallel_step: str='1'):
     :return: Returns func(arg) and stores the corresponding result in result_buffer.
     """
     arg_list = call_dict['arg' + parallel_step]
-    replace_arg_list = [result_buffer[item][0] if isinstance(item, str) and ('result' in item or 'input' in item) else item for item in arg_list]  # 参数
+    # 'result1', 'input2', ... refer to the outputs of previous steps; any other argument is passed as it is
+    replace_arg_list = [result_buffer[item][0] if isinstance(item, str) and re.fullmatch(r'(result|input)\d+', item) else item for item in arg_list]  # 参数
     func_name = call_dict['function' + parallel_step]             #
     output = call_dict['output' + parallel_step]                  #
     desc = call_dict['description' + parallel_step]               #
     if func_name == 'loop_rank':
-        replace_arg_list[1] = eval(replace_arg_list[1])
-    result = eval(func_name)(*replace_arg_list)
+        replace_arg_list[1] = get_tool_function(replace_arg_list[1])
+    result = get_tool_function(func_name)(*replace_arg_list)
     result_buffer[output] = (result, desc)                        #    'result1': (df1, desc)
     return result_buffer
 
@@ -75,10 +97,10 @@ def load_tool_and_prompt(tool_lib, tool_prompt ):
     '''
     #
 
-    with open(tool_lib, 'r') as f:
+    with open(tool_lib, 'r', encoding='utf-8') as f:
         tool_lib = json.load(f)
 
-    with open(tool_prompt, 'r') as f:
+    with open(tool_prompt, 'r', encoding='utf-8') as f:
         #
         tool_prompt = json.load(f)
 
@@ -123,6 +145,8 @@ def check_RPM(run_time_list, new_time, max_RPM=1):
 
 def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_official_call, openai_key = '', api_base='', engine=''):
     output_text = ''
+    # Close the figures of previous requests: a request without a chart would otherwise return the previous chart.
+    plt.close('all')
     ################################# Step-1:Task select ###########################################
     current_time = datetime.datetime.now()
     formatted_time = current_time.strftime("%Y-%m-%d")
@@ -131,7 +155,7 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
         formatted_time = (current_time - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
     print('===============================Intent Detecting===========================================')
-    with open(os.path.join(PROMPT_LIB_DIR, 'prompt_intent_detection.json'), 'r') as f:
+    with open(os.path.join(PROMPT_LIB_DIR, 'prompt_intent_detection.json'), 'r', encoding='utf-8') as f:
         prompt_task_dict = json.load(f)
     prompt_intent_detection = ''
     for key, value in prompt_task_dict.items():
@@ -145,7 +169,7 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     #     time.sleep(sleep_time)
     
     # response = send_chat_request("qwen-chat-72b",prompt_intent_detection)
-    response = send_chat_request(model,prompt_intent_detection, openai_key=openai_key, api_base=api_base, engine=engine)
+    response = send_chat_request(model,prompt_intent_detection, send_chat_request_Azure=send_chat_request_Azure, openai_key=openai_key, api_base=api_base, engine=engine)
 
     new_instruction = response
     print('new_instruction:', new_instruction)
@@ -159,7 +183,7 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     print('===============================Task Planing===========================================')
     output_text= output_text + '=====Task Planing Stage=====\n\n'
 
-    with open(os.path.join(PROMPT_LIB_DIR, 'prompt_task.json'), 'r') as f:
+    with open(os.path.join(PROMPT_LIB_DIR, 'prompt_task.json'), 'r', encoding='utf-8') as f:
         prompt_task_dict = json.load(f)
     prompt_task = ''
     for key, value in prompt_task_dict.items():
@@ -172,10 +196,10 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     #     time.sleep(sleep_time)
     
     # response = send_chat_request("qwen-chat-72b",prompt_task)
-    response = send_chat_request(model, prompt_task, openai_key=openai_key,api_base=api_base,engine=engine)
+    response = send_chat_request(model, prompt_task, send_chat_request_Azure=send_chat_request_Azure, openai_key=openai_key,api_base=api_base,engine=engine)
 
     task_select = response
-    pattern = r"(task\d+=)(\{[^}]*\})"
+    pattern = r"(task\d+=)\s*(\{[^}]*\})"
     matches = re.findall(pattern, task_select)
     task_plan = {}
     for task in matches:
@@ -217,14 +241,13 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     #     time.sleep(sleep_time)
     
     # response = send_chat_request("qwen-chat-72b",prompt_flat)
-    response = send_chat_request(model, prompt_flat, openai_key=openai_key,api_base=api_base, engine=engine)
+    response = send_chat_request(model, prompt_flat, send_chat_request_Azure=send_chat_request_Azure, openai_key=openai_key,api_base=api_base, engine=engine)
 
     #response = "Function Call:step1={\n \"arg1\": [\"五粮液\"],\n \"function1\": \"get_stock_code\",\n \"output1\": \"result1\",\n \"arg2\": [\"泸州老窖\"],\n \"function2\": \"get_stock_code\",\n \"output2\": \"result2\"\n},step2={\n \"arg1\": [\"result1\",\"20190101\",\"20220630\",\"daily\"],\n \"function1\": \"get_stock_prices_data\",\n \"output1\": \"result3\",\n \"arg2\": [\"result2\",\"20190101\",\"20220630\",\"daily\"],\n \"function2\": \"get_stock_prices_data\",\n \"output2\": \"result4\"\n},step3={\n \"arg1\": [\"result3\",\"Cumulative_Earnings_Rate\"],\n \"function1\": \"calculate_stock_index\",\n \"output1\": \"result5\",\n \"arg2\": [\"result4\",\"Cumulative_Earnings_Rate\"],\n \"function2\": \"calculate_stock_index\",\n \"output2\": \"result6\"\n}, ###Output:{\n \"五粮液在2019年1月1日到2022年06月30的每日收盘价格时序表格\": \"result5\",\n \"泸州老窖在2019年1月1日到2022年06月30的每日收盘价格时序表格\": \"result6\"\n}"
-    if '###' in response:
-        call_steps, _ = response.split('###') 
-    else:
-        call_steps = response  
-    pattern = r"(step\d+=)(\{[^}]*\})"
+    # Keep the segment that holds the function calls. The response may repeat the '###Function Call:' prefix of the
+    # in-context examples or add notes after the closing '###'; unpacking response.split('###') then raised ValueError.
+    call_steps = max(response.split('###'), key=lambda part: len(re.findall(r'step\d+=', part)))
+    pattern = r"(step\d+=)\s*(\{[^}]*\})"   # allow a line break between "stepN=" and "{" (as in prompt_visualization.json)
     matches = re.findall(pattern, call_steps)
  
     # pattern = r"(step\d+=)(\{[^}]*\})"
@@ -302,12 +325,11 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     #     time.sleep(sleep_time)
 
     # response = send_chat_request("qwen-chat-72b", prompt_flat)
-    response = send_chat_request(model, prompt_flat, openai_key=openai_key, api_base=api_base, engine=engine)
-    if '###' in response:
-        call_steps, _ = response.split('###') 
-    else:
-        call_steps = response
-    pattern = r"(step\d+=)(\{[^}]*\})"
+    response = send_chat_request(model, prompt_flat, send_chat_request_Azure=send_chat_request_Azure, openai_key=openai_key, api_base=api_base, engine=engine)
+    # Keep the segment that holds the function calls. The response may repeat the '###Function Call:' prefix of the
+    # in-context examples or add notes after the closing '###'; unpacking response.split('###') then raised ValueError.
+    call_steps = max(response.split('###'), key=lambda part: len(re.findall(r'step\d+=', part)))
+    pattern = r"(step\d+=)\s*(\{[^}]*\})"   # allow a line break between "stepN=" and "{" (as in prompt_visualization.json)
     matches = re.findall(pattern, call_steps)
     for match in matches:
         step, content = match
@@ -344,12 +366,12 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
 
     #
     print('===============================Summary Stage===========================================')
-    output_prompt = "请用第一人称总结一下整个任务规划和解决过程,并且输出结果,用[Task]表示每个规划任务,用\{function\}表示每个任务里调用的函数." + \
-                    "示例1:###我用将您的问题拆分成两个任务,首先第一个任务[stock_task],我依次获取五粮液和贵州茅台从2013年5月20日到2023年5月20日的净资产回报率roe的时序数据. \n然后第二个任务[visualization_task],我用折线图绘制五粮液和贵州茅台从2013年5月20日到2023年5月20日的净资产回报率,并计算它们的平均值和中位数. \n\n在第一个任务中我分别使用了2个工具函数\{get_stock_code\},\{get_Financial_data_from_time_range\}获取到两只股票的roe数据,在第二个任务里我们使用折线图\{plot_stock_data\}工具函数来绘制他们的roe十年走势,最后并计算了两只股票十年ROE的中位数\{output_median_col\}和均值\{output_mean_col\}.\n\n最后贵州茅台的ROE的均值和中位数是\{\},{},五粮液的ROE的均值和中位数是\{\},\{\}###" + \
-                    "示例2:###我用将您的问题拆分成两个任务,首先第一个任务[stock_task],我依次获取20230101到20230520这段时间北向资金每日净流入和每日累计流入时序数据,第二个任务是[visualization_task],因此我在同一张图里同时绘制北向资金20230101到20230520的每日净流入柱状图和每日累计流入的折线图 \n\n为了完成第一个任务中我分别使用了2个工具函数\{get_north_south_money\},\{calculate_stock_index\}分别获取到北上资金的每日净流入量和每日的累计净流入量,第二个任务里我们使用折线图\{plot_stock_data\}绘制来两个指标的变化走势.\n\n最后我们给您提供了包含两个指标的折线图和数据表格." + \
-                    "示例3:###我用将您的问题拆分成两个任务,首先第一个任务[economic_task],我爬取了上市公司贵州茅台和其主营业务介绍信息. \n然后第二个任务[visualization_task],我用表格打印贵州茅台及其相关信息. \n\n在第一个任务中我分别使用了1个工具函数\{get_company_info\} 获取到贵州茅台的公司信息,在第二个任务里我们使用折线图\{print_save_table\}工具函数来输出表格.\n"
+    output_prompt = "请用第一人称总结一下整个任务规划和解决过程,并且输出结果,用[Task]表示每个规划任务,用\\{function\\}表示每个任务里调用的函数." + \
+                    "示例1:###我用将您的问题拆分成两个任务,首先第一个任务[stock_task],我依次获取五粮液和贵州茅台从2013年5月20日到2023年5月20日的净资产回报率roe的时序数据. \n然后第二个任务[visualization_task],我用折线图绘制五粮液和贵州茅台从2013年5月20日到2023年5月20日的净资产回报率,并计算它们的平均值和中位数. \n\n在第一个任务中我分别使用了2个工具函数\\{get_stock_code\\},\\{get_Financial_data_from_time_range\\}获取到两只股票的roe数据,在第二个任务里我们使用折线图\\{plot_stock_data\\}工具函数来绘制他们的roe十年走势,最后并计算了两只股票十年ROE的中位数\\{output_median_col\\}和均值\\{output_mean_col\\}.\n\n最后贵州茅台的ROE的均值和中位数是\\{\\},{},五粮液的ROE的均值和中位数是\\{\\},\\{\\}###" + \
+                    "示例2:###我用将您的问题拆分成两个任务,首先第一个任务[stock_task],我依次获取20230101到20230520这段时间北向资金每日净流入和每日累计流入时序数据,第二个任务是[visualization_task],因此我在同一张图里同时绘制北向资金20230101到20230520的每日净流入柱状图和每日累计流入的折线图 \n\n为了完成第一个任务中我分别使用了2个工具函数\\{get_north_south_money\\},\\{calculate_stock_index\\}分别获取到北上资金的每日净流入量和每日的累计净流入量,第二个任务里我们使用折线图\\{plot_stock_data\\}绘制来两个指标的变化走势.\n\n最后我们给您提供了包含两个指标的折线图和数据表格." + \
+                    "示例3:###我用将您的问题拆分成两个任务,首先第一个任务[economic_task],我爬取了上市公司贵州茅台和其主营业务介绍信息. \n然后第二个任务[visualization_task],我用表格打印贵州茅台及其相关信息. \n\n在第一个任务中我分别使用了1个工具函数\\{get_company_info\\} 获取到贵州茅台的公司信息,在第二个任务里我们使用折线图\\{print_save_table\\}工具函数来输出表格.\n"
     # output_result = send_chat_request("qwen-chat-72b", output_prompt + str_out + '###')
-    output_result = send_chat_request(model, output_prompt + str_out + '###', openai_key=openai_key, api_base=api_base,engine=engine)
+    output_result = send_chat_request(model, output_prompt + str_out + '###', send_chat_request_Azure=send_chat_request_Azure, openai_key=openai_key, api_base=api_base,engine=engine)
     print(output_result)
     buf = BytesIO()
     plt.savefig(buf, format='png')
@@ -363,24 +385,30 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
 
 
 def gradio_interface(query, openai_key, openai_key_azure, api_base,engine):
-    # Create a new thread to run the function.
-    if openai_key.startswith('sk') and openai_key_azure == '':
-        print('send_official_call')
-        thread = MyThread(target=run, args=(query, add_to_queue, send_official_call, openai_key))
-    elif openai_key =='' and len(openai_key_azure)>0:
+    # Create a new thread to run the function. The web demo uses GPT (model='gpt') from OpenAI or Azure-OpenAI.
+    if openai_key_azure and not openai_key:
         print('send_chat_request_Azure')
-        thread = MyThread(target=run, args=(query, add_to_queue, send_chat_request_Azure, openai_key_azure, api_base, engine))
+        thread = MyThread(target=run, args=('gpt', query, add_to_queue, send_chat_request_Azure, openai_key_azure, api_base, engine))
+    else:
+        print('send_official_call')
+        thread = MyThread(target=run, args=('gpt', query, add_to_queue, send_official_call, openai_key))
     thread.start()
     placeholder_image = np.zeros((100, 100, 3), dtype=np.uint8)  # Create a placeholder image.
     placeholder_dataframe =  pd.DataFrame()                      #
+    solving_step = ''
 
     # Wait for the result of the calculate function and display the intermediate results simultaneously.
     while thread.is_alive():
         while not intermediate_results.empty():
-            yield intermediate_results.get(), placeholder_image,  'Running' , placeholder_dataframe         # Use the yield keyword to return intermediate results in real-time
+            solving_step = intermediate_results.get()
+            yield solving_step, placeholder_image,  'Running' , placeholder_dataframe         # Use the yield keyword to return intermediate results in real-time
         time.sleep(0.1)                                          # Avoid excessive resource consumption.
 
-    finally_text, img, output, df = thread.get_result()
+    try:
+        finally_text, img, output, df = thread.get_result()
+    except Exception as e:
+        yield solving_step, placeholder_image, f'Error: {e}', placeholder_dataframe
+        return
     yield  finally_text, img, output, df
     # Return the final result.
 
@@ -398,15 +426,17 @@ def send_chat_request(model, prompt, send_chat_request_Azure = send_official_cal
     if model=="gpt":
         response = send_chat_request_Azure(prompt, openai_key=openai_key, api_base=api_base, engine=engine)
     elif model=="qwen-chat-72b":
-        response = send_chat_request_qwen(prompt)# please set your api_key in lab_llms_call.py 
+        response = send_chat_request_qwen(prompt)# please set the environment variable DASHSCOPE_API_KEY
     # elif model=="glm-3-turbo":
-    #     response = send_chat_request_glm(prompt)# please set your api_key in lab_llms_call.py 
+    #     response = send_chat_request_glm(prompt)# please set the environment variable ZHIPUAI_API_KEY
     # Currently, smaller LLMs are unsupported
     # elif model =="chatglm3-6b":
-    #     response = send_chat_request_chatglm3_6b(prompt)# please set your api_key in lab_llms_call.py 
+    #     response = send_chat_request_chatglm3_6b(prompt)# please set the environment variable DASHSCOPE_API_KEY
     # If you want to call the llm from local, you can try the following: internlm-chat-7b
     # elif model=="internlm-chat-7b":
-    #     response = send_chat_request_internlm_chat(prompt)  
+    #     response = send_chat_request_internlm_chat(prompt)
+    else:
+        raise ValueError(f'Unsupported model: {model}')
     return response
 
 
@@ -418,7 +448,7 @@ if __name__ == '__main__':
     
     # set the llm model ("gpt","qwen-chat-72b")
     model="gpt"
-    output, image, df , output_result = run(model,instruction, send_chat_request_Azure = openai_call, openai_key=openai_key, api_base='', engine='')
+    output, image, output_result, df = run(model,instruction, send_chat_request_Azure = openai_call, openai_key=openai_key, api_base='', engine='')
     print(output_result)
     plt.show()
 

@@ -79,13 +79,13 @@
     "pro.index_member": {
         "func_desc": "获取申万行业指数的成分股信息",
         "Column_name": "{'index_code': '指数代码', 'index_name': '指数名称', 'con_code': '成分股代码', 'con_name': '成分股名称', 'in_date': '纳入日期', 'out_date': '剔除日期', 'is_new': '是否最新'}",
-        "example_input": "pro.index_member(index_code= \"850531.SI \", fields=[\"index_code\",\"con_code\",\"in_date\",\"out_date\",\"is_new\",\"index_name\",\"con_name\"])",
+        "example_input": "pro.index_member(index_code= \"850531.SI\", fields=[\"index_code\",\"con_code\",\"in_date\",\"out_date\",\"is_new\",\"index_name\",\"con_name\"])",
         "output_first_and_last_row": "850531.SI 黄金(申万) 000506.SZ 中润资源 20150701 20160630 N\n850531.SI 黄金(申万) 601899.SH 紫金矿业 20140221 20211210 N"
     },
     "pro.index_classify": {
         "func_desc": "获取申万一级(L1),二级(L2),三级(L3)的行业信息",
         "Column_name": "{'index_code': '行业代码', 'industry_name': '行业名称', 'level': '行业级别'}",
-        "example_input": "pro.index_classify(level='L1', src='SW2021',filter=[\"index_code\",\"industry_name\",\"level\"])",
+        "example_input": "pro.index_classify(level='L1', src='SW2021',fields=[\"index_code\",\"industry_name\",\"level\"])",
         "output_first_and_last_row": "801010.SI 农林牧渔 L1\n801980.SI 美容护理 L1"
     },
     "pro.stock_basic": {
