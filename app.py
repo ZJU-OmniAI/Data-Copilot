@@ -52,13 +52,16 @@ class Client:
 
 
     def run(self, messages):
-        if self.OPENAI_KEY == '' and self.OPENAI_API_KEY_AZURE == '':
+        # The keys are None until the OK button is clicked
+        openai_key = self.OPENAI_KEY or ''
+        openai_key_azure = self.OPENAI_API_KEY_AZURE or ''
+        if openai_key == '' and openai_key_azure == '':
             yield '', np.zeros((100, 100, 3), dtype=np.uint8), "Please set your OpenAI API key first!!!", pd.DataFrame()
-        elif len(self.OPENAI_KEY) >= 0 and not self.OPENAI_KEY.startswith('sk') and self.OPENAI_API_KEY_AZURE == '':
+        elif not openai_key.startswith('sk') and openai_key_azure == '':
             yield '', np.zeros((100, 100, 3), dtype=np.uint8), "Your openai key is incorrect!!!", pd.DataFrame()
         else:
             # self.stop = False
-            gen = gradio_interface(messages, self.OPENAI_KEY, self.OPENAI_API_KEY_AZURE, self.OPENAI_API_BASED_AZURE, self.OPENAI_ENGINE_AZURE)
+            gen = gradio_interface(messages, openai_key, openai_key_azure, self.OPENAI_API_BASED_AZURE or '', self.OPENAI_ENGINE_AZURE or '')
             while not self.stop:  #
                 try:
                     yield next(gen)

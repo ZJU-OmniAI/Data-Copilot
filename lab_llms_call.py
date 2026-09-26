@@ -1,9 +1,11 @@
-
+import os
 from http import HTTPStatus
 import dashscope
-from zhipuai import ZhipuAI
 
-dashscope.api_key='<your api key>'
+# API keys are read from environment variables:
+#   DASHSCOPE_API_KEY  Qwen / ChatGLM on DashScope, https://bailian.console.aliyun.com/
+#   ZHIPUAI_API_KEY    GLM, https://open.bigmodel.cn/
+dashscope.api_key = os.getenv('DASHSCOPE_API_KEY')
 def send_chat_request_qwen(query):
     '''
     You can generate API keys in https://bailian.console.aliyun.com/
@@ -21,7 +23,8 @@ def send_chat_request_qwen(query):
         #print(data_res)
         return data_res
     else:
-        print('Request id: %s, Status code: %s, error code: %s, error message: %s' % (
+        # raise instead of returning None, which main.py cannot parse
+        raise RuntimeError('Request id: %s, Status code: %s, error code: %s, error message: %s' % (
             response.request_id, response.status_code,
             response.code, response.message
         ))
@@ -44,7 +47,8 @@ def send_chat_request_chatglm3_6b(query):
         print(data_res)
         return data_res
     else:
-        print('Request id: %s, Status code: %s, error code: %s, error message: %s' % (
+        # raise instead of returning None, which main.py cannot parse
+        raise RuntimeError('Request id: %s, Status code: %s, error code: %s, error message: %s' % (
             response.request_id, response.status_code,
             response.code, response.message
         ))
@@ -67,17 +71,21 @@ def send_chat_request_chatglm_6b(query):
         # print(data_res)
         return data_res
     else:
-        print('Request id: %s, Status code: %s, error code: %s, error message: %s' % (
+        # raise instead of returning None, which main.py cannot parse
+        raise RuntimeError('Request id: %s, Status code: %s, error code: %s, error message: %s' % (
             response.request_id, response.status_code,
             response.code, response.message
         ))
    
 	
-client = ZhipuAI(api_key="<your api key>") 
 def send_chat_request_glm(query):
     '''
     You can generate API keys in https://open.bigmodel.cn/
     '''
+    # Optional dependency (pip install zhipuai==2.0.1), imported here so that main.py works without it.
+    # zhipuai 2.x needs pydantic 2, which the Gradio 3.34 web demo does not support: use a separate environment.
+    from zhipuai import ZhipuAI
+    client = ZhipuAI(api_key=os.getenv('ZHIPUAI_API_KEY'))
     response = client.chat.completions.create(
         model="glm-3-turbo",  
         messages=[
