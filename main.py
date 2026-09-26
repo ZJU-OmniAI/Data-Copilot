@@ -24,6 +24,11 @@ plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
 import openai
 
+# Prompt and tool libraries are located relative to this file, so main.py can be launched from any directory.
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROMPT_LIB_DIR = os.path.join(ROOT_DIR, 'prompt_lib')
+TOOL_LIB_DIR = os.path.join(ROOT_DIR, 'tool_lib')
+
 
 # To override the Thread method
 class MyThread(Thread):
@@ -126,7 +131,7 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
         formatted_time = (current_time - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
 
     print('===============================Intent Detecting===========================================')
-    with open('./prompt_lib/prompt_intent_detection.json', 'r') as f:
+    with open(os.path.join(PROMPT_LIB_DIR, 'prompt_intent_detection.json'), 'r') as f:
         prompt_task_dict = json.load(f)
     prompt_intent_detection = ''
     for key, value in prompt_task_dict.items():
@@ -154,7 +159,7 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     print('===============================Task Planing===========================================')
     output_text= output_text + '=====Task Planing Stage=====\n\n'
 
-    with open('./prompt_lib/prompt_task.json', 'r') as f:
+    with open(os.path.join(PROMPT_LIB_DIR, 'prompt_task.json'), 'r') as f:
         prompt_task_dict = json.load(f)
     prompt_task = ''
     for key, value in prompt_task_dict.items():
@@ -200,8 +205,8 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     task_name = list(task_plan.keys())[0].split('_task')[0]
     task_instruction = list(task_plan.values())[0]
 
-    tool_lib = './tool_lib/' + 'tool_' + task_name + '.json'
-    tool_prompt = './prompt_lib/' + 'prompt_' + task_name + '.json'
+    tool_lib = os.path.join(TOOL_LIB_DIR, 'tool_' + task_name + '.json')
+    tool_prompt = os.path.join(PROMPT_LIB_DIR, 'prompt_' + task_name + '.json')
     prompt_flat = load_tool_and_prompt(tool_lib, tool_prompt)
     prompt_flat = prompt_flat + '\n\n' +'Instruction :'+ task_instruction+ ' ###Function Call'
 
@@ -278,8 +283,8 @@ def run(model, instruction, add_to_queue=None, send_chat_request_Azure = send_of
     task_instruction = list(task_plan.values())[1] #''
 
 
-    tool_lib = './tool_lib/' + 'tool_' + task_name + '.json'
-    tool_prompt = './prompt_lib/' + 'prompt_' + task_name + '.json'
+    tool_lib = os.path.join(TOOL_LIB_DIR, 'tool_' + task_name + '.json')
+    tool_prompt = os.path.join(PROMPT_LIB_DIR, 'prompt_' + task_name + '.json')
 
     result_buffer_viz={}
     Previous_result = {}

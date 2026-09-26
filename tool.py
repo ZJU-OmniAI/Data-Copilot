@@ -2,6 +2,7 @@ import tushare as ts
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
+import re
 import random
 from matplotlib.ticker import MaxNLocator
 #from prettytable import PrettyTable
@@ -22,7 +23,13 @@ from sklearn.linear_model import LinearRegression
 # plt.rcParams['axes.unicode_minus'] = False
 
 
-font_path = './fonts/SimHei.ttf'
+# Paths are resolved relative to this file, so the scripts can be launched from any directory.
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(ROOT_DIR, 'data')
+STOCK_BASIC_CSV = os.path.join(DATA_DIR, 'tushare_stock_basic_20230421210721.csv')  # local snapshot of the A-share stock list (2023-04-21)
+FUND_BASIC_CSV = os.path.join(DATA_DIR, 'tushare_fund_basic_all.csv')                 # local snapshot of the fund list
+
+font_path = os.path.join(ROOT_DIR, 'fonts', 'SimHei.ttf')
 font_prop = fm.FontProperties(fname=font_path)
 
 
@@ -109,7 +116,7 @@ def get_stock_code(stock_name: str) -> str:
     # Retrieve the stock code of a given stock name. If we call get_stock_code('贵州茅台'), it will return '600519.SH'.
 
 
-    df = pd.read_csv('tushare_stock_basic_20230421210721.csv')
+    df = pd.read_csv(STOCK_BASIC_CSV)
     try:
         code = df.loc[df.name==stock_name].ts_code.iloc[0]
         return code
@@ -132,7 +139,7 @@ def get_stock_name_from_code(stock_code: str) -> str:
     # For example,if we call get_stock_name_from_code('600519.SH'), it will return '贵州茅台'.
 
 
-    df = pd.read_csv('tushare_stock_basic_20230421210721.csv')
+    df = pd.read_csv(STOCK_BASIC_CSV)
     name = df.loc[df.ts_code == stock_code].name.iloc[0]
 
     return name
@@ -226,7 +233,7 @@ def get_stock_prices_data(stock_name: str='', start_date: str='', end_date: str=
     stock_data[['open', 'high', 'low', 'close']] *= stock_data['adj_factor'].values.reshape(-1, 1)
 
     #stock_data.rename(columns={'vol': 'volume'}, inplace=True)
-    df = pd.read_csv('tushare_stock_basic_20230421210721.csv')
+    df = pd.read_csv(STOCK_BASIC_CSV)
     stock_data_merged = pd.merge(stock_data, df, on='ts_code')
     stock_data_merged.rename(columns={'ts_code': 'stock_code'}, inplace=True)
     stock_data_merged.rename(columns={'name': 'stock_name'}, inplace=True)
@@ -304,7 +311,7 @@ def get_stock_technical_data(stock_name: str, start_date: str, end_date: str) ->
 
     #
     stock_data = pd.merge(stock_data1, stock_data2, on=['ts_code', 'trade_date'])
-    df = pd.read_csv('tushare_stock_basic_20230421210721.csv')
+    df = pd.read_csv(STOCK_BASIC_CSV)
     stock_data_merged = pd.merge(stock_data, df, on='ts_code')
     stock_data_merged = stock_data_merged.sort_values(by='trade_date', ascending=True)
 
@@ -1014,15 +1021,15 @@ def get_index_constituent(index_name: str = '', start_date:str ='', end_date:str
         if '申万一级行业' in index_name:
             # index_name取后面的名字
             index_name = index_name[6:]
-            df1 = pd.read_csv('SW2021_industry_L1.csv')
+            df1 = pd.read_csv(os.path.join(DATA_DIR, 'SW2021_industry_L1.csv'))
             index_code = df1[df1['industry_name'] == index_name]['index_code'].iloc[0]
         elif '申万二级行业' in index_name:
             index_name = index_name[6:]
-            df1 = pd.read_csv('SW2021_industry_L2.csv')
+            df1 = pd.read_csv(os.path.join(DATA_DIR, 'SW2021_industry_L2.csv'))
             index_code = df1[df1['industry_name'] == index_name]['index_code'].iloc[0]
         elif '申万三级行业' in index_name:
             index_name = index_name[6:]
-            df1 = pd.read_csv('SW2021_industry_L3.csv')
+            df1 = pd.read_csv(os.path.join(DATA_DIR, 'SW2021_industry_L3.csv'))
             index_code = df1[df1['industry_name'] == index_name]['index_code'].iloc[0]
 
         print('The industry code for ', index_name, ' is: ', index_code)
@@ -1095,7 +1102,7 @@ def get_index_constituent(index_name: str = '', start_date:str ='', end_date:str
         last_day = df['trade_date'][0]
         #  for the last trading day
         df = df[df['trade_date'] == last_day]
-        df_stock = pd.read_csv('tushare_stock_basic_20230421210721.csv')
+        df_stock = pd.read_csv(STOCK_BASIC_CSV)
         # Merge based on the stock code.
         df = pd.merge(df, df_stock, how='left', left_on='con_code', right_on='ts_code')
         # df.rename(columns={'name_y': 'name'}, inplace=True)
@@ -1626,11 +1633,10 @@ def query_fund_name_or_code(fund_name: str = '', fund_code: str = '') -> str:
         """
 
 
-    #df = pd.read_csv('./tushare_fund_basic_20230508193747.csv')
     # Query the fund code based on the fund name.
     if fund_name != '' and fund_code == '':
         #
-        df = pd.read_csv('./tushare_fund_basic_all.csv')
+        df = pd.read_csv(FUND_BASIC_CSV)
         #
         # df = pro.fund_basic(**{
         #     "ts_code": "",
@@ -1653,7 +1659,7 @@ def query_fund_name_or_code(fund_name: str = '', fund_code: str = '') -> str:
         return code
     # Query the fund name based on the fund code.
     if fund_code != '' and fund_name == '':
-        df = pd.read_csv('./tushare_fund_basic_all.csv')
+        df = pd.read_csv(FUND_BASIC_CSV)
         try:
             name = df[df['ts_code'] == fund_code]['name'].values[0]
         except:
