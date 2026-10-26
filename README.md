@@ -14,10 +14,6 @@
 
 </div>
 
-## Media Coverage · 媒体报道
-
-- **机器之心（新浪转载） · 2023.06** — [大语言模型做数据助手，浙大Data-Copilot高效调用、处理、可视化数据](https://finance.sina.cn/tech/2023-06-26/detail-imyyquis6140492.d.html?from=wap)
-
 ## 🔥 News
 
 - **2024.05**: Data-Copilot was presented as an **Oral** at the ICLR 2024 [Workshop on Large Language Models for Agents](https://openreview.net/forum?id=iUEBnQyfWE).
